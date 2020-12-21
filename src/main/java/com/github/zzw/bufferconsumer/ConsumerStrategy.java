@@ -1,4 +1,4 @@
-package zzw.bufferconsumer;
+package com.github.zzw.bufferconsumer;
 
 import static java.util.concurrent.TimeUnit.DAYS;
 

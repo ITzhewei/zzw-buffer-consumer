@@ -1,7 +1,6 @@
-package zzw.bufferconsumer.impl;
+package com.github.zzw.bufferconsumer.impl;
 
 import static java.lang.System.currentTimeMillis;
-import static zzw.bufferconsumer.impl.SimpleBufferConsumerBuilder.DEFAULT_NEXT_TRIGGER_PERIOD;
 
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -17,37 +16,34 @@ import java.util.function.ToIntBiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.github.phantomthief.util.ThrowableConsumer;
-
-import zzw.bufferconsumer.BufferConsumer;
-import zzw.bufferconsumer.ConsumerStrategy;
+import com.github.zzw.bufferconsumer.BufferConsumer;
+import com.github.zzw.bufferconsumer.ConsumerStrategy;
+import com.github.zzw.bufferconsumer.ThrowableConsumer;
 
 /**
  * @author zhangzhewei
  * Created on 2019-06-04
  */
-public class SimpleBufferConsumer<E, C> implements BufferConsumer<E> {
+public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
 
     private static final Logger logger = LoggerFactory.getLogger(SimpleBufferConsumer.class);
 
     private final AtomicLong counter = new AtomicLong();
-    private final ConsumerStrategy consumerStrategy;
-    private final ScheduledExecutorService scheduledExecutorService;
     private final Supplier<C> bufferFactory;
     private final AtomicReference<C> buffer = new AtomicReference<>();
-    private final ToIntBiFunction<C, E> queueAdder;
+    private final ToIntBiFunction<C, T> queueAdder;
     private final ThrowableConsumer<C, Throwable> consumer;
     private final long maxBufferCount;
-    private final Consumer<E> rejectHandler;
+    private final Consumer<T> rejectHandler;
     private final String name;
     private final ReadLock readLock;
     private final WriteLock writeLock;
 
     private volatile long lastConsumeTimestamp = currentTimeMillis();
 
-    public SimpleBufferConsumer(SimpleBufferConsumerBuilder<E, C> builder) {
-        this.consumerStrategy = builder.consumerStrategy;
-        this.scheduledExecutorService = builder.scheduledExecutorService;
+    public SimpleBufferConsumer(SimpleBufferConsumerBuilder<T, C> builder) {
+        ConsumerStrategy consumerStrategy = builder.consumerStrategy;
+        ScheduledExecutorService scheduledExecutorService = builder.scheduledExecutorService;
         this.bufferFactory = builder.bufferFactory;
         this.queueAdder = builder.queueAdder;
         this.consumer = builder.consumer;
@@ -65,11 +61,11 @@ public class SimpleBufferConsumer<E, C> implements BufferConsumer<E> {
         }
         scheduledExecutorService.schedule(
                 new ConsumerRunnable(scheduledExecutorService, consumerStrategy),
-                DEFAULT_NEXT_TRIGGER_PERIOD, TimeUnit.MILLISECONDS);
+                SimpleBufferConsumerBuilder.DEFAULT_NEXT_TRIGGER_PERIOD, TimeUnit.MILLISECONDS);
     }
 
     @Override
-    public void enqueue(E element) {
+    public void enqueue(T element) {
         long currentCount = counter.get();
         if (maxBufferCount > 0 && maxBufferCount <= currentCount) {
             if (rejectHandler != null) {
@@ -118,7 +114,7 @@ public class SimpleBufferConsumer<E, C> implements BufferConsumer<E> {
                     consumer.accept(data);
                 }
             } catch (Throwable t) {
-                logger.error("BUFFER CONSUMER ERROR", t);
+                logger.error("buffer consume doConsume error", t);
             }
         }
     }
@@ -152,7 +148,7 @@ public class SimpleBufferConsumer<E, C> implements BufferConsumer<E> {
                     }
                     nextConsumePeriod = consumerCursor.getNextPeriod();
                 } catch (Exception e) {
-                    logger.error("BUFFER CONSUMER RUN ERROR", e);
+                    logger.error("buffer consume run error", e);
                 }
                 scheduledExecutorService.schedule(this, nextConsumePeriod, TimeUnit.MILLISECONDS);
             }
