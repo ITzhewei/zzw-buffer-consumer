@@ -2,6 +2,7 @@ package com.github.zzw.bufferconsumer.impl;
 
 import static java.lang.System.currentTimeMillis;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -23,25 +24,30 @@ import com.github.zzw.bufferconsumer.ThrowableConsumer;
 /**
  * @author zhangzhewei
  * Created on 2019-06-04
+ * 批量消费简单实现
+ * 可根据业务不同选择多种缓存存储器-来实现更多种类的批量消费
  */
-public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
+public class BufferConsumerImpl<T, C> implements BufferConsumer<T> {
 
-    private static final Logger logger = LoggerFactory.getLogger(SimpleBufferConsumer.class);
+    private static final Logger logger = LoggerFactory.getLogger(BufferConsumerImpl.class);
 
     private final AtomicLong counter = new AtomicLong();
-    private final Supplier<C> bufferFactory;
+    private final Supplier<C> bufferFactory;//缓存器存储
     private final AtomicReference<C> buffer = new AtomicReference<>();
+    //入队器
     private final ToIntBiFunction<C, T> queueAdder;
-    private final ThrowableConsumer<C, Throwable> consumer;
-    private final long maxBufferCount;
+    private final ThrowableConsumer<C, Throwable> consumer;//批量消费方法
+    private final long maxBufferCount;//最大缓存数量
+    //拒绝策略
     private final Consumer<T> rejectHandler;
-    private final String name;
+    private final ConcurrentLinkedQueue<T> queue = new ConcurrentLinkedQueue<>();
+    //读写锁
     private final ReadLock readLock;
     private final WriteLock writeLock;
 
     private volatile long lastConsumeTimestamp = currentTimeMillis();
 
-    public SimpleBufferConsumer(SimpleBufferConsumerBuilder<T, C> builder) {
+    public BufferConsumerImpl(SimpleBufferConsumerBuilder<T, C> builder) {
         ConsumerStrategy consumerStrategy = builder.consumerStrategy;
         ScheduledExecutorService scheduledExecutorService = builder.scheduledExecutorService;
         this.bufferFactory = builder.bufferFactory;
@@ -50,7 +56,6 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
         this.maxBufferCount = builder.maxBufferCount;
         this.rejectHandler = builder.rejectHandler;
         this.buffer.set(bufferFactory.get());
-        this.name = builder.name;
         if (builder.disableSwitchLock) {
             readLock = null;
             writeLock = null;
@@ -59,6 +64,7 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
             readLock = lock.readLock();
             writeLock = lock.writeLock();
         }
+        //使用的是一个每一秒执行一次的定时任务检查是否满足消费条件
         scheduledExecutorService.schedule(
                 new ConsumerRunnable(scheduledExecutorService, consumerStrategy),
                 SimpleBufferConsumerBuilder.DEFAULT_NEXT_TRIGGER_PERIOD, TimeUnit.MILLISECONDS);
@@ -66,6 +72,7 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
 
     @Override
     public void enqueue(T element) {
+
         long currentCount = counter.get();
         if (maxBufferCount > 0 && maxBufferCount <= currentCount) {
             if (rejectHandler != null) {
@@ -74,6 +81,7 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
             return;
         }
         boolean locked = false;
+        //入队的时候要加锁
         if (readLock != null) {
             try {
                 readLock.lock();
@@ -83,6 +91,8 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
             }
         }
         try {
+            //防止计数依赖容器本身size
+            //好处是多线程下更安全
             int changeCount = queueAdder.applyAsInt(buffer.get(), element);
             if (changeCount > 0) {
                 counter.addAndGet(changeCount);
@@ -96,7 +106,7 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
 
     @Override
     public void doConsume() {
-        synchronized (SimpleBufferConsumer.class) {
+        synchronized (BufferConsumerImpl.class) {
             C data;
             try {
                 if (writeLock != null) {
@@ -119,6 +129,9 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
         }
     }
 
+    /**
+     * 获取队列长度
+     */
     @Override
     public long getPendingChanges() {
         return counter.get();
@@ -137,7 +150,7 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
 
         @Override
         public void run() {
-            synchronized (SimpleBufferConsumer.class) {
+            synchronized (BufferConsumerImpl.class) {
                 long nextConsumePeriod = 0L;
                 try {
                     ConsumerStrategy.ConsumerCursor consumerCursor = consumerStrategy
@@ -148,6 +161,7 @@ public class SimpleBufferConsumer<T, C> implements BufferConsumer<T> {
                     }
                     nextConsumePeriod = consumerCursor.getNextPeriod();
                 } catch (Exception e) {
+                    //catch异常防止影响下次任务
                     logger.error("buffer consume run error", e);
                 }
                 scheduledExecutorService.schedule(this, nextConsumePeriod, TimeUnit.MILLISECONDS);

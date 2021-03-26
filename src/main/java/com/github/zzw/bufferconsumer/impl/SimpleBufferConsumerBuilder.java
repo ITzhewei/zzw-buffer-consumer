@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 /**
  * @author zhangzhewei
  * Created on 2019-06-04
+ * 批量消费简单构造
  */
 @SuppressWarnings("unchecked")
 public class SimpleBufferConsumerBuilder<T, C> {
@@ -33,15 +34,22 @@ public class SimpleBufferConsumerBuilder<T, C> {
 
     public static final long DEFAULT_NEXT_TRIGGER_PERIOD = TimeUnit.SECONDS.toMillis(1);
 
-    ConsumerStrategy consumerStrategy;
-    ScheduledExecutorService scheduledExecutorService;
-    Supplier<C> bufferFactory;
-    ToIntBiFunction<C, T> queueAdder;
-    ThrowableConsumer<C, Throwable> consumer;
-    long maxBufferCount = -1;
-    Consumer<T> rejectHandler;
-    String name;
-    boolean disableSwitchLock;
+    //消费策略
+    protected ConsumerStrategy consumerStrategy;
+    //调度执行
+    protected ScheduledExecutorService scheduledExecutorService;
+    //队列工厂
+    protected Supplier<C> bufferFactory;
+    //入队器
+    protected ToIntBiFunction<C, T> queueAdder;
+    //消费器
+    protected ThrowableConsumer<C, Throwable> consumer;
+    //最大缓存数量
+    protected long maxBufferCount = -1;
+    //拒绝策略
+    protected Consumer<T> rejectHandler;
+    protected String name;
+    protected boolean disableSwitchLock;
 
     public SimpleBufferConsumerBuilder<T, C> container(Supplier<? extends C> factory) {
         checkNotNull(factory);
@@ -55,7 +63,8 @@ public class SimpleBufferConsumerBuilder<T, C> {
         return this;
     }
 
-    public SimpleBufferConsumerBuilder<T, C> setScheduleExecutorService(ScheduledExecutorService scheduleExecutorService) {
+    public SimpleBufferConsumerBuilder<T, C> setScheduleExecutorService(
+            ScheduledExecutorService scheduleExecutorService) {
         checkNotNull(scheduleExecutorService);
 
         this.scheduledExecutorService = scheduleExecutorService;
@@ -64,31 +73,43 @@ public class SimpleBufferConsumerBuilder<T, C> {
 
     public SimpleBufferConsumerBuilder<T, C> consumerStrategy(ConsumerStrategy consumerStrategy) {
         checkNotNull(consumerStrategy);
-
         this.consumerStrategy = consumerStrategy;
         return this;
     }
 
+    /**
+     * 每隔多长时间执行一次
+     */
     public SimpleBufferConsumerBuilder<T, C> interval(long interval, TimeUnit unit) {
         this.consumerStrategy = (lastConsumeTimestamp, changeCount) -> {
             long intervalInMs = unit.toMillis(interval);
-            return ConsumerCursor.cursor(changeCount > 0 && System.currentTimeMillis() - lastConsumeTimestamp >= intervalInMs, intervalInMs);
+            return ConsumerCursor
+                    .cursor(changeCount > 0 && System.currentTimeMillis() - lastConsumeTimestamp >= intervalInMs,
+                            intervalInMs);
         };
         return this;
     }
 
+    /**
+     * 缓存数量达到count 或者 每隔interval时间 执行一次
+     */
     public SimpleBufferConsumerBuilder<T, C> interval(long count, long interval, TimeUnit unit) {
         this.consumerStrategy = (lastConsumeTimestamp, changeCount) -> {
             long intervalInMs = unit.toMillis(interval);
             return ConsumerStrategy.ConsumerCursor
-                    .cursor(changeCount > count || System.currentTimeMillis() - lastConsumeTimestamp >= intervalInMs, DEFAULT_NEXT_TRIGGER_PERIOD);
+                    .cursor(changeCount > count || System.currentTimeMillis() - lastConsumeTimestamp >= intervalInMs,
+                            DEFAULT_NEXT_TRIGGER_PERIOD);
         };
         return this;
     }
 
+    /**
+     * 缓存数量达到count时, 执行消费
+     */
     public SimpleBufferConsumerBuilder<T, C> interval(long count) {
         this.consumerStrategy =
-                (lastConsumeTimestamp, changeCount) -> ConsumerStrategy.ConsumerCursor.cursor(changeCount >= count, DEFAULT_NEXT_TRIGGER_PERIOD);
+                (lastConsumeTimestamp, changeCount) -> ConsumerStrategy.ConsumerCursor
+                        .cursor(changeCount >= count, DEFAULT_NEXT_TRIGGER_PERIOD);
         return this;
     }
 
@@ -98,7 +119,7 @@ public class SimpleBufferConsumerBuilder<T, C> {
         return this;
     }
 
-    public SimpleBufferConsumerBuilder<T, C> setMaxBufferCount(long count) {
+    public SimpleBufferConsumerBuilder<T, C> maxBufferCount(long count) {
         this.maxBufferCount = count;
         return this;
     }
@@ -119,17 +140,17 @@ public class SimpleBufferConsumerBuilder<T, C> {
 
     private ScheduledExecutorService makeScheduleExecutor() {
         String threadPattern = name == null ? "buffer-consumer-thread-%d" : "buffer-consumer-thread-[" + name + "]";
-        return newSingleThreadScheduledExecutor(new ThreadFactoryBuilder()//
-                .setNameFormat(threadPattern) //
-                .setDaemon(true) //
-                .build());
+        ThreadFactoryBuilder builder = new ThreadFactoryBuilder()
+                .setNameFormat(threadPattern)
+                .setDaemon(true);
+        return newSingleThreadScheduledExecutor(builder.build());
     }
 
     public BufferConsumer<T> build() {
         return new LazyBufferConsumer<>(() -> {
             ensure();
             SimpleBufferConsumerBuilder<T, C> builder = SimpleBufferConsumerBuilder.this;
-            return new SimpleBufferConsumer<>(builder);
+            return new BufferConsumerImpl<>(builder);
         });
     }
 }

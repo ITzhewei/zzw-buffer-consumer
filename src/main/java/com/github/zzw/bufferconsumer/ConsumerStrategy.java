@@ -5,13 +5,14 @@ import static java.util.concurrent.TimeUnit.DAYS;
 /**
  * @author zhangzhewei
  * Created on 2019-06-04
+ * 消费策略
  */
 public interface ConsumerStrategy {
 
     ConsumerCursor canConsume(long lastConsumeTimestamp, long changeCount);
 
     /**
-     * cursor
+     * 消费指针
      */
     class ConsumerCursor {
         private static final ConsumerCursor EMPTY = new ConsumerCursor(true, DAYS.toMillis(1));

@@ -1,13 +1,13 @@
 package com.github.zzw;
 
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.github.zzw.bufferconsumer.BufferConsumer;
+import com.github.zzw.model.Person;
 import com.google.common.collect.Lists;
 
 
@@ -20,10 +20,12 @@ public class BufferConsumerTest {
     private static final Logger logger = LoggerFactory.getLogger(BufferConsumerTest.class);
 
     private BufferConsumer<Person> bufferConsumer = BufferConsumer.<Person, List<Person>> simpleBuilder() //
-            .container(Lists::newArrayList) //初始化容器
-            .queueAdder(this::add) //添加函数
-            //            .interval(3) //消费间隔
-            .interval(3, TimeUnit.SECONDS).interval(2).setMaxBufferCount(1000) //最大缓存数量
+            .container(Lists::newArrayList)
+            .queueAdder(this::add)
+//            .interval(5, 5, TimeUnit.SECONDS) //时间间隔消费
+            .interval(10) //按照数量间隔消费
+//            .interval(10, 5, TimeUnit.SECONDS) //时间和数量间隔一起进行
+            .maxBufferCount(1000) //最大缓存数量
             .consumer(this::doConsumer) //消费函数
             .build();
 
@@ -47,10 +49,11 @@ public class BufferConsumerTest {
 
     @Test
     public void testConsumer() throws InterruptedException {
-        for (long i = 0; i < 10; i++) {
+        for (long i = 0; i < 30; i++) {
             bufferConsumer.enqueue(new Person(i, i + ""));
             Thread.sleep(1000L);
         }
+
     }
 
 }
