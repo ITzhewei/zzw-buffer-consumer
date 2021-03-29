@@ -2,14 +2,11 @@ package com.github.zzw.bufferconsumer.impl;
 
 import static java.lang.System.currentTimeMillis;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock.ReadLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.function.ToIntBiFunction;
@@ -40,10 +37,8 @@ public class BufferConsumerImpl<T, C> implements BufferConsumer<T> {
     private final long maxBufferCount;//最大缓存数量
     //拒绝策略
     private final Consumer<T> rejectHandler;
-    private final ConcurrentLinkedQueue<T> queue = new ConcurrentLinkedQueue<>();
     //读写锁
-    private final ReadLock readLock;
-    private final WriteLock writeLock;
+    private final ReentrantLock lock;
 
     private volatile long lastConsumeTimestamp = currentTimeMillis();
 
@@ -57,12 +52,9 @@ public class BufferConsumerImpl<T, C> implements BufferConsumer<T> {
         this.rejectHandler = builder.rejectHandler;
         this.buffer.set(bufferFactory.get());
         if (builder.disableSwitchLock) {
-            readLock = null;
-            writeLock = null;
+            lock = null;
         } else {
-            ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-            readLock = lock.readLock();
-            writeLock = lock.writeLock();
+             lock = new ReentrantLock();
         }
         //使用的是一个每一秒执行一次的定时任务检查是否满足消费条件
         scheduledExecutorService.schedule(
@@ -72,7 +64,6 @@ public class BufferConsumerImpl<T, C> implements BufferConsumer<T> {
 
     @Override
     public void enqueue(T element) {
-
         long currentCount = counter.get();
         if (maxBufferCount > 0 && maxBufferCount <= currentCount) {
             if (rejectHandler != null) {
@@ -82,24 +73,22 @@ public class BufferConsumerImpl<T, C> implements BufferConsumer<T> {
         }
         boolean locked = false;
         //入队的时候要加锁
-        if (readLock != null) {
+        if (lock != null) {
             try {
-                readLock.lock();
+                lock.lock();
                 locked = true;
             } catch (Exception e) {
                 // ignore lock failed
             }
         }
         try {
-            //防止计数依赖容器本身size
-            //好处是多线程下更安全
             int changeCount = queueAdder.applyAsInt(buffer.get(), element);
             if (changeCount > 0) {
                 counter.addAndGet(changeCount);
             }
         } finally {
             if (locked) {
-                readLock.unlock();
+                lock.unlock();
             }
         }
     }
@@ -109,15 +98,15 @@ public class BufferConsumerImpl<T, C> implements BufferConsumer<T> {
         synchronized (BufferConsumerImpl.class) {
             C data;
             try {
-                if (writeLock != null) {
-                    writeLock.lock();
+                if (lock != null) {
+                    lock.lock();
                 }
                 try {
                     data = buffer.getAndSet(bufferFactory.get());
                 } finally {
                     counter.set(0L);
-                    if (writeLock != null) {
-                        writeLock.unlock();
+                    if (lock != null) {
+                        lock.unlock();
                     }
                 }
                 if (data != null) {
